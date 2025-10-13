@@ -201,6 +201,10 @@ def main() -> None:
             except Exception:
                 pass
 
+            # Flush output buffers before force exit
+            sys.stdout.flush()
+            sys.stderr.flush()
+
             # Force exit like test command does (same pattern as test command)
             os._exit(exit_code)
 
