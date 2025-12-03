@@ -456,6 +456,15 @@ class Command:
                     suite.addTests(loader.loadTestsFromName(module_name))
                     return
 
+                # Ensure apps is in sys.path for dotted path imports
+                apps_dir = "apps"
+                if os.path.isdir(apps_dir) and apps_dir not in sys.path:
+                    sys.path.insert(0, apps_dir)
+
+                # Strip apps. prefix if present since apps is in sys.path
+                if target.startswith("apps."):
+                    target = target[5:]
+
                 # Otherwise, treat as dotted path (module, class, or method)
                 suite.addTests(loader.loadTestsFromName(target))
 
