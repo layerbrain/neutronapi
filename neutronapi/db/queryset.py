@@ -81,6 +81,7 @@ class QuerySet(Generic[T]):
         # Database access is deferred until needed
         self.db = None
         self.provider = None
+        self._db_alias = None  # Database alias for .using()
         self._filters = []
         self._order_by = []
         self._limit_count = None
@@ -117,7 +118,8 @@ class QuerySet(Generic[T]):
         if hasattr(self, '_model_class'):
             from .connection import get_databases, DatabaseType
             db_manager = get_databases()
-            connection = await db_manager.get_connection()
+            alias = self._db_alias if self._db_alias else 'default'
+            connection = await db_manager.get_connection(alias)
             provider = connection.provider
             # Cache provider for subsequent non-query-building paths (update/delete)
             self.provider = provider
@@ -303,6 +305,12 @@ class QuerySet(Generic[T]):
         """Return the queryset itself (unevaluated), Django-style."""
         return self._clone()
 
+    def using(self, alias: str) -> 'QuerySet':
+        """Return a QuerySet that will use the specified database alias."""
+        qs = self._clone()
+        qs._db_alias = alias
+        return qs
+
     async def _fetch_all(self) -> List[Union[T, Dict, Any]]:
         # Ensure provider/dialect is initialized before constructing SQL
         provider = await self._get_provider()
@@ -457,7 +465,7 @@ class QuerySet(Generic[T]):
         # Convert any Enum values
         converted_kwargs = self._convert_enum_values(kwargs)
         instance = self._model_class(**converted_kwargs)
-        await instance.save(create=True)
+        await instance.save(create=True, using=self._db_alias)
         return instance
 
 
@@ -519,6 +527,7 @@ class QuerySet(Generic[T]):
         qs.table = self.table
         qs.provider = self.provider
         qs._is_sqlite = self._is_sqlite
+        qs._db_alias = self._db_alias
         return qs
 
     def _build_where_clause(self, param_start: int = 1) -> tuple:
