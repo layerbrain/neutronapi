@@ -321,18 +321,135 @@ class TestOpenAPI(unittest.IsolatedAsyncioTestCase):
     async def test_generate_all_endpoints_convenience_function(self):
         """Test the generate_all_endpoints_openapi convenience function"""
         from neutronapi.openapi.openapi import generate_all_endpoints_openapi
-        
+
         apis = {
             "health": HealthAPI(),
             "hidden": HiddenAPI(),
             "mixed": ExcludeEndpointAPI(),
         }
-        
+
         spec = await generate_all_endpoints_openapi(apis, title="All Endpoints")
-        
+
         # Should include ALL endpoints, even hidden ones and private ones
         self.assertIn("/v1/health/", spec["paths"])
         self.assertIn("/v1/internal/debug", spec["paths"])  # Hidden API included
         self.assertIn("/v1/mixed/public", spec["paths"])
         self.assertIn("/v1/mixed/private", spec["paths"])  # Private endpoint included
+
+    async def test_path_parameters_in_operation_parameters(self):
+        """Test that path parameters appear in operation parameters alongside pagination params"""
+        # Create API with path parameter and custom endpoint metadata
+        class PathParamAPI(API):
+            resource = "/v1/items"
+            name = "items"
+
+            @API.endpoint(
+                "/<int:item_id>",
+                methods=["GET"],
+                name="get",
+                parameters=[
+                    {"name": "item_id", "in": "path", "required": True, "schema": {"type": "integer"}}
+                ]
+            )
+            async def get_item(self, scope, receive, send, item_id=None, **kwargs):
+                return await self.response({"id": item_id})
+
+        gen = OpenAPIGenerator(title="Test", version="1.0.0")
+        spec = await gen.generate_from_api(PathParamAPI())
+
+        item_detail = spec["paths"]["/v1/items/{item_id}"]["get"]
+        param_names = [p["name"] for p in item_detail.get("parameters", [])]
+
+        # Should have path param (from custom metadata)
+        self.assertIn("item_id", param_names)
+        # Should also have pagination params (merged, not overwritten)
+        self.assertIn("page", param_names)
+        self.assertIn("page_size", param_names)
+        self.assertIn("ordering", param_names)
+
+    async def test_response_schema_wrapped_in_content(self):
+        """Test that response schemas are properly wrapped in content structure"""
+        # Create API with custom response using top-level schema (old/incorrect format)
+        class CustomResponseAPI(API):
+            resource = "/v1/test"
+            name = "test"
+
+            @API.endpoint(
+                "/",
+                methods=["POST"],
+                name="create",
+                responses={
+                    201: {"description": "Created", "schema": {"type": "object", "properties": {"id": {"type": "string"}}}}
+                }
+            )
+            async def create(self, scope, receive, send, **kwargs):
+                return await self.response({"id": "123"}, status=201)
+
+        gen = OpenAPIGenerator(title="Test", version="1.0.0")
+        spec = await gen.generate_from_api(CustomResponseAPI())
+
+        response_201 = spec["paths"]["/v1/test/"]["post"]["responses"]["201"]
+        # Should be wrapped in content
+        self.assertIn("content", response_201)
+        self.assertIn("application/json", response_201["content"])
+        self.assertIn("schema", response_201["content"]["application/json"])
+        # Should NOT have schema at top level
+        self.assertNotIn("schema", response_201)
+
+    async def test_paginated_false_excludes_pagination_params(self):
+        """Test that paginated=False excludes pagination parameters from OpenAPI spec"""
+        class NonPaginatedAPI(API):
+            resource = "/v1/items"
+            name = "items"
+
+            @API.endpoint(
+                "/<int:item_id>",
+                methods=["GET"],
+                name="get",
+                paginated=False,  # Explicitly disable pagination params
+                parameters=[
+                    {"name": "item_id", "in": "path", "required": True, "schema": {"type": "integer"}}
+                ]
+            )
+            async def get_item(self, scope, receive, send, item_id=None, **kwargs):
+                return await self.response({"id": item_id})
+
+        gen = OpenAPIGenerator(title="Test", version="1.0.0")
+        spec = await gen.generate_from_api(NonPaginatedAPI())
+
+        item_detail = spec["paths"]["/v1/items/{item_id}"]["get"]
+        param_names = [p["name"] for p in item_detail.get("parameters", [])]
+
+        # Should have path param
+        self.assertIn("item_id", param_names)
+        # Should NOT have pagination params
+        self.assertNotIn("page", param_names)
+        self.assertNotIn("page_size", param_names)
+        self.assertNotIn("ordering", param_names)
+
+    async def test_paginated_true_includes_pagination_params(self):
+        """Test that paginated=True (default) includes pagination parameters"""
+        class PaginatedAPI(API):
+            resource = "/v1/items"
+            name = "items"
+
+            @API.endpoint(
+                "/",
+                methods=["GET"],
+                name="list",
+                paginated=True,  # Explicitly enable (also the default)
+            )
+            async def list_items(self, scope, receive, send, **kwargs):
+                return await self.response({"data": []})
+
+        gen = OpenAPIGenerator(title="Test", version="1.0.0")
+        spec = await gen.generate_from_api(PaginatedAPI())
+
+        list_endpoint = spec["paths"]["/v1/items/"]["get"]
+        param_names = [p["name"] for p in list_endpoint.get("parameters", [])]
+
+        # Should have pagination params
+        self.assertIn("page", param_names)
+        self.assertIn("page_size", param_names)
+        self.assertIn("ordering", param_names)
 
