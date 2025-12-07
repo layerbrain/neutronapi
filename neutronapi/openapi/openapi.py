@@ -370,23 +370,6 @@ class OpenAPIGenerator:
         if endpoint_metadata and endpoint_metadata.deprecated:
             operation["deprecated"] = True
 
-        # Add tags
-        if api.tags:
-            operation["tags"] = api.tags
-        elif api.name:
-            operation["tags"] = [api.name.title()]
-
-        # Add parameters
-        parameters = self._generate_parameters(api, method)
-        if parameters:
-            operation["parameters"] = parameters
-
-        # Add request body for POST/PUT/PATCH
-        if method.upper() in ["POST", "PUT", "PATCH"]:
-            request_body = self._generate_request_body(api, handler)
-            if request_body:
-                operation["requestBody"] = request_body
-
         # Add security if authentication is required
         if api.authentication_class or permission_classes:
             operation["security"] = self._generate_security_requirements(
@@ -422,10 +405,17 @@ class OpenAPIGenerator:
     def _get_parameters(
         self, api: API, method: str, endpoint_metadata
     ) -> Optional[List[Dict[str, Any]]]:
-        """Get parameters from endpoint metadata or auto-generate."""
+        """Get parameters from endpoint metadata, merged with auto-generated ones."""
+        auto_params = self._generate_parameters(api, method, endpoint_metadata)
+
         if endpoint_metadata and endpoint_metadata.parameters:
-            return endpoint_metadata.parameters
-        return self._generate_parameters(api, method)
+            # Merge: custom params take precedence
+            custom_params = endpoint_metadata.parameters
+            custom_names = {p["name"] for p in custom_params}
+            merged = custom_params + [p for p in auto_params if p["name"] not in custom_names]
+            return merged if merged else None
+
+        return auto_params if auto_params else None
 
     def _get_responses(
         self, api: API, handler: callable, method: str, endpoint_metadata
@@ -443,18 +433,22 @@ class OpenAPIGenerator:
                     "description": "Successful response",
                     "content": {"application/json": {"schema": schema}},
                 }
-            # Convert int keys to strings for OpenAPI
-            return {
-                str(k): (
-                    v
-                    if isinstance(v, dict) and "description" in v
-                    else {
-                        "description": f"HTTP {k} response",
-                        "content": {"application/json": {"schema": v}},
-                    }
-                )
-                for k, v in responses.items()
-            }
+            # Convert int keys to strings for OpenAPI and wrap schemas in content
+            def wrap_response(v, k):
+                if isinstance(v, dict) and "description" in v:
+                    # If schema at top level without content wrapper, wrap it
+                    if "schema" in v and "content" not in v:
+                        return {
+                            "description": v["description"],
+                            "content": {"application/json": {"schema": v["schema"]}}
+                        }
+                    return v
+                return {
+                    "description": f"HTTP {k} response",
+                    "content": {"application/json": {"schema": v}},
+                }
+
+            return {str(k): wrap_response(v, k) for k, v in responses.items()}
         return self._generate_responses(api, handler, method)
 
     def _get_request_body(
@@ -613,12 +607,15 @@ class OpenAPIGenerator:
             "required": ["object", "data"],
         }
 
-    def _generate_parameters(self, api: API, method: str) -> List[Dict[str, Any]]:
+    def _generate_parameters(
+        self, api: API, method: str, endpoint_metadata=None
+    ) -> List[Dict[str, Any]]:
         """Generate parameters for the operation."""
         parameters = []
 
-        # Add pagination parameters for GET requests
-        if method.upper() == "GET":
+        # Add pagination parameters for GET requests if paginated is True (default)
+        paginated = getattr(endpoint_metadata, "paginated", True) if endpoint_metadata else True
+        if method.upper() == "GET" and paginated:
             parameters.extend(
                 [
                     {

@@ -138,6 +138,8 @@ class Endpoint:
     include_in_docs: bool = True
     # Body parsing control
     skip_body_parsing: bool = False
+    # Pagination control for OpenAPI
+    paginated: bool = True
 
 
 class API:
@@ -313,6 +315,8 @@ class API:
         include_in_docs: bool = True,
         # Body parsing control
         skip_body_parsing: bool = False,
+        # Pagination control for OpenAPI
+        paginated: bool = True,
     ) -> Callable:
         """Decorator for defining API endpoints.
 
@@ -443,6 +447,8 @@ class API:
                 include_in_docs=include_in_docs,
                 # Body parsing control
                 skip_body_parsing=skip_body_parsing,
+                # Pagination control
+                paginated=paginated,
             )
             # Attach extra endpoint metadata for middlewares/parsers
             wrapper._endpoint_middlewares = middlewares or []
