@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neutronapi"
-version = "0.5.11"
+version = "0.5.12"
 description = "A modern, high-performance ASGI-based Python web framework."
 readme = "README.md"
 requires-python = ">=3.12"
